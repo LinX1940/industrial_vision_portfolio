@@ -1,0 +1,1 @@
+Error: OpenCV failed to open video source 0. Check usbipd attach status in Windows host and /dev/video0 permissions in WSL2.
