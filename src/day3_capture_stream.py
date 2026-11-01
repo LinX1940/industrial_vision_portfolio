@@ -1,80 +1,82 @@
 import os
-import time 
 import cv2
+import numpy as np
+def safe_crop_roi(image,x,y,w,h):
+    if image is None:
+        print("[Error] 输入图像为空! ")
+        return None
+    img_h,img_w=image.shape[:2]
+    if w<=0 or h<=0:
+        print(f"[Warning] 裁剪框尺寸不合法: w={w},h={h}(必须大于0)")
+        return None
+    x1=max(0,min(x,img_w))
+    y1=max(0,min(y,img_h))
+    x2=max(0,min(x+w,img_w))
+    y2=max(0,min(y+h,img_h))
+    if x1>=x2 or y1>=y2:
+        print(f"[Warning] 裁剪区域完全越界 原始请求: x={x},y={y},w={w},h={h}"
+        f"截断后无有效像素"
+    )
+        return None
+    cropped=image[y1:y2,x1:x2]
+    print (
+        f"[Info] 成功裁剪 ROI: 原始(x={x},y={y},w={w},h={h}) ->"
+        f" 实际生效区域({x1},{y1}到{x2},{y2})"
+    )
+    return cropped
 def main():
     os.makedirs("outputs",exist_ok=True)
-    source=0
-    cap=cv2.VideoCapture(source)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    if not cap.isOpened():
-        print("[Error]无法打开摄像头或视频源！请检查usbipd挂载状态或视频路径")
-        with open("outputs/camera_error_log.txt","w")as f:
-            f.write(
-                "Error: OpenCV failed to open video source 0. "
-                "Check usbipd attach status in Windows host and /dev/video0 permissions"
-                " in WSL2."
-            )
-        return
-    width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps_input=cap.get(cv2.CAP_PROP_FPS)
-    fps_input=fps_input if fps_input>0 else 30.0    
-    print(f"[Info]成功打开视频源 分辨率:{width}*{height}")
-    output_path="outputs/demo_stream.mp4"
-    fourcc=cv2.VideoWriter_fourcc(*"mp4v")
-    out=cv2.VideoWriter(output_path,fourcc,20.0,(width,height))
-    prev_time=time.time()
-    current_fps=0.0
-    print("[Info] 开始捕获视频流。按 'q' 键可随时退出并保存视频。")
-    try:
-        while True:
-            ret,frame=cap.read()
-            if not ret or frame is None:
-                print("Warning 无法获取当前帧 可能视频流已中断")
-                break
-            cv2.imshow("Industrial Vision D3 - Live Stream", frame)
-            now=time.time()
-            diff=now-prev_time
-            if diff>0:
-                current_fps=1.0/diff
-            prev_time=now
-            cv2.putText(
-                frame,
-                f"FPS{current_fps:.1f}",
-                (30,40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0,255,0),
-                2,
-            )
-            cv2.putText(
-            frame,
-            f"Res: {width}x{height}",
-            (30, 80),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 255, 0),
-            2,
-        )
-            out.write(frame)
-        # 按 'q' 键退出循环
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                print("[Info] 用户主动退出。")
-                break
+    canvas = np.zeros((480,640,3),dtype=np.uint8)
+    canvas[:]=(50,50,50)
+    img_h,img_w=canvas.shape[:2]
+    center_x,center_y=img_w//2,img_h//2
+    cv2.circle(canvas,(center_x,center_y),5,(0,0,255),-1)
+    cv2.line(
+        canvas,
+        (center_x-20,center_y),
+        (center_x+20,center_y),
+        (0,255,255),
+        2,
+    )
+    cv2.line(
+        canvas,
+        (center_x,center_y-20),
+        (center_x,center_y+20),
+        (0,255,255),
+        2,
+    )
+    roi_x,roi_y,roi_w,roi_h=150,100,200,150
+    cv2.rectangle(
+        canvas,
+        (roi_x,roi_y),
+        (roi_x+roi_w,roi_y+roi_h),
+        (0,255,0),
+        2,
+    )
+    cv2.putText(
+        canvas,
+        "Fixed ROI",
+        (roi_x,roi_y-10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0,255,0),
+        2,
+    )
+    normal_crop=safe_crop_roi(canvas,roi_x,roi_y,roi_w,roi_h)
+    if(normal_crop is not None):
+        cv2.imwrite("outputs/normal_crop.png",normal_crop)
+    print("\n--- 开始测试边界与异常输入 ---")
+    # 测试用例 A: 坐标部分越界（超出右下角边界）
+    safe_crop_roi(canvas, 500, 350, 300, 200)
 
-    except KeyboardInterrupt:
-        print("[Info] 捕获到中断信号（Ctrl+C），正在退出...")
-    finally:
-    # 安全释放所有句柄
-        if "cap" in locals() and cap.isOpened():
-            cap.release()
-        if "out" in locals():
-            out.release()
-        cv2.destroyAllWindows()
-        print(f"[Info] 摄像头已安全释放，视频已保存至: {output_path}")
+    # 测试用例 B: 坐标完全在画面外部（负数坐标）
+    safe_crop_roi(canvas, -50, -50, 100, 100)
 
+    # 测试用例 C: 宽高为零或负数
+    safe_crop_roi(canvas, 100, 100, 0, 150)
+    safe_crop_roi(canvas, 100, 100, 100, -20)
 
-if __name__ == "__main__":
-  main()
+    cv2.imwrite("output/d4_canvas_annotated.png",canvas)
+if __name__ =="__main__":
+    main()
+
